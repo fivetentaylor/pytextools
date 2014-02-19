@@ -1,0 +1,105 @@
+#!/usr/bin/env python
+
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+import os
+import atexit
+user_term = os.environ['TERM'] 
+os.environ['TERM'] = 'linux'
+def resetPath():
+	os.environ['TERM'] = user_term
+atexit.register(resetPath)
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+
+import string
+import argparse
+import sys
+import signal
+import re
+import csv
+import dateutil
+from dateutil import parser
+from datetime import datetime
+from datetime import timedelta
+
+import ipdb
+
+signal.signal( signal.SIGPIPE, signal.SIG_DFL )
+
+def intList(s):
+	try:
+		fields = map(lambda x: (int(x)-1), s.split(','))
+		return fields
+	except:
+		raise argparse.ArgumentTypeError("Must be a list of integers")
+
+def sublist( list, indices=[] ):
+	if len(indices):
+		sublist = []
+		for n in indices:
+			if n < len(list):
+				sublist.append( list[n] )
+		return sublist
+	else:
+		return list
+
+def parseArgs():
+	parser = argparse.ArgumentParser(description='Allows for easy date formatting in delimited files', 
+		formatter_class=argparse.RawTextHelpFormatter)
+
+	fields = parser.add_argument_group('fields')
+	fields.add_argument('-t', '--field-delimiter', metavar='DELIMITER', dest='sep', action='store', default='|',
+				help='field delimiter')
+	fields.add_argument('-q', '--quote-char', metavar='CHAR', dest='q', action='store', default='"',
+				 help='quote char')
+	fields.add_argument('-f', '--format-fields', metavar='INDICES', dest='fields', action='store', type=intList,
+				default=[0], help='comma separated list of fields to format')
+
+	formats = parser.add_argument_group('format')
+	formats.add_argument('-i', '--input-format', metavar='INPUT_FORMAT', dest='inf', action='store',default='',required=True,
+				help='Input format (smart date parse is the default).\n'
+				'A description of possible date formats is located here:\n'
+				'http://docs.python.org/2/library/datetime.html#strftime-strptime-behavior')
+	formats.add_argument('-o', '--out-format', metavar='OUTPUT_FORMAT', dest='outf', action='store',default='%Y%m%d',
+				help='Output format (default is YYYYMMDD).\n'
+				'A description of possible date formats is located here:\n'
+				'http://docs.python.org/2/library/datetime.html#strftime-strptime-behavior')
+
+	addsub = parser.add_argument_group('add/subtract time',)
+	addsub.add_argument('-a', '--add-time', dest='add', action='store', default='',
+				help='add time by passing string with format [0-9]+(weeks|days|hours|minutes|seconds)')
+	addsub.add_argument('-s', '--subtract-time', dest='sub', action='store', default='',
+				help='subtract time by passing string with format [0-9]+(weeks|days|hours|minutes|seconds)')
+
+	parser.add_argument('file', metavar='FILE', nargs='?', default='/dev/stdin',
+				help='the file to format dates in' )
+	a = parser.parse_args()
+
+	a.infunc = (lambda d: dateutil.parser.parse(d)) if not a.inf else (lambda d: datetime.strptime(d, a.inf))
+	a.outfunc = lambda d: d.strftime(a.outf)
+	a.add = {re.search(r'[a-z]+', x).group() : int(re.search(r'[0-9]+', x).group()) for x in a.add.split(',') if x != ''}
+	a.sub = {re.search(r'[a-z]+', x).group() : int(re.search(r'[0-9]+', x).group()) for x in a.sub.split(',') if x != ''}
+
+	return a
+
+def formatDates(args):
+	with open(args.file, 'rb') as f:
+		delta = timedelta(**args.add) - timedelta(**args.sub)
+		reader = csv.reader(f, delimiter=args.sep, quotechar=args.q)
+		for row in reader:
+			for i in args.fields:
+				#ipdb.set_trace()
+				original = row[i]
+				try:
+					d = args.infunc(row[i])
+					d += delta
+					row[i] = args.outfunc(d)
+				except:
+					row[i] = original
+					sys.stderr.write('Failed to parse %s on line %d\n' % (original, reader.line_num))
+			print args.sep.join(row)
+
+if __name__ == "__main__":
+	args = parseArgs()
+	formatDates(args)
+
+

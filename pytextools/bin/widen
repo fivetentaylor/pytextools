@@ -1,0 +1,70 @@
+#!/usr/bin/env python
+
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+import os
+import atexit
+user_term = os.environ['TERM'] 
+os.environ['TERM'] = 'linux'
+def resetPath():
+	os.environ['TERM'] = user_term
+atexit.register(resetPath)
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+
+import argparse
+import sys
+import signal
+import re
+import csv
+
+signal.signal( signal.SIGPIPE, signal.SIG_DFL )
+
+def intList(s):
+	try:
+		fields = map(lambda x: (int(x)-1), s.split(','))
+		return fields
+	except:
+		raise argparse.ArgumentTypeError("Must be a list of integers")
+
+def sublist( list, indices=[] ):
+	if len(indices):
+		sublist = []
+		for n in indices:
+			if n < len(list):
+				sublist.append( list[n] )
+		return sublist
+	else:
+		return list
+
+def parseArgs():
+	parser = argparse.ArgumentParser(description='Unify number of fields in delimited file', 
+		formatter_class=argparse.RawTextHelpFormatter)
+
+	fields = parser.add_argument_group('fields')
+	fields.add_argument('-t', '--field-delimiter', metavar='DELIMITER', dest='sep', action='store', default='|',
+				help='field delimiter (default = |)')
+	fields.add_argument('-q', '--quote-char', metavar='CHAR', dest='quote', action='store', default='"',
+				 help='quote char (default = ")')
+	fields.add_argument('-w', '--width', metavar='INT', type=int, dest='width', action='store',default=0,
+				help='The width you want each record to be\n')
+	fields.add_argument('-d', '--default', metavar='STRING', dest='default', action='store',default='',
+				help='The string you wish to fill additional columns with\n')
+
+	parser.add_argument('file', metavar='FILE', nargs='?', default='/dev/stdin',
+				help='the file to replace quotes in (default = stdin)' )
+	a = parser.parse_args()
+
+	return a
+
+def fixWidth(args):
+	with open(args.file, 'rb') as f:
+		reader = csv.reader(f, delimiter=args.sep, quotechar=args.quote)
+		for row in reader:
+			diff = args.width - len(row)
+			add = [args.default] * diff if diff > 0 else []
+			print args.sep.join(row + add)
+
+if __name__ == "__main__":
+	args = parseArgs()
+	fixWidth(args)
+
+

@@ -1,0 +1,49 @@
+#!/usr/bin/env python
+
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+import os
+import atexit
+user_term = os.environ['TERM'] 
+os.environ['TERM'] = 'linux'
+def resetPath():
+	os.environ['TERM'] = user_term
+atexit.register(resetPath)
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+
+import json
+import signal
+import argparse
+
+signal.signal( signal.SIGPIPE, signal.SIG_DFL )
+
+def parseArgs():
+	parser = argparse.ArgumentParser(description='Pretty print lines of json', 
+		formatter_class=argparse.RawTextHelpFormatter)
+
+	parser.add_argument('-n', '--tweet-number', dest='n', action='store_true',
+				 help='print the count before each tweet')
+
+	parser.add_argument('file', metavar='FILE', nargs='?', default='/dev/stdin',
+				help='The json input file (default = stdin)' )
+	a = parser.parse_args()
+
+	if a.n:
+		def ppjson(i, obj):
+			print '%d\t%s' %(i, json.dumps(obj, sort_keys=True,
+									indent=4, separators=(',', ': ')).replace('\n', '\n\t'))
+		a.ppjson = ppjson
+	else:
+		def ppjson(i, obj):
+			print json.dumps(obj, sort_keys=True,
+							indent=4, separators=(',', ': '))
+		a.ppjson = ppjson
+
+	return a
+
+if __name__ == '__main__':
+	args = parseArgs()
+
+	with open(args.file) as f:
+		for i,line in enumerate(f,1):
+			args.ppjson(i, json.loads(line))
+

@@ -1,0 +1,77 @@
+#!/usr/bin/env python
+
+import ipdb
+import os
+import re
+import string
+import argparse
+import sys
+import signal
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from pandas.tools.plotting import scatter_matrix
+
+def intlist(s):
+	try:
+		fields = map(lambda x: (int(x)-1), s.split(','))
+	except:
+		raise argparse.argumenttypeerror("must be a list of integers")
+	return fields
+
+def csvlist(s):
+	return s.split(',')
+
+def parseargs():
+	parser = argparse.ArgumentParser(description='Easy scatter matrix plot creation')
+
+	parser.add_argument('-s', '--sample', dest='sample', action='store', type=int,
+				default=1000, help='how many records to sample (default = 1000)')
+
+	parser.add_argument('-f', '--format', metavar='HEADER', dest='header', action='store', type=csvlist,
+				default=[], help='if no header row exists. can be a comma separated list of '
+								 'names or a format file.')
+
+	parser.add_argument('-t', '--delimiter', metavar='CHAR', dest='d', action='store', default='|',
+							help='default = |')
+
+	parser.add_argument('-c', '--tag', dest='tag', action='store_true',
+							help='Indicates that the last column is a tag or class')
+	
+	parser.add_argument('-p', '--plot_type', dest='plot', action='store',
+				default='kde', help='either kde or hist')
+
+	parser.add_argument('file', metavar='FILE', nargs='?', default='/dev/stdin',
+				help='the file to test for uniqueness' )
+
+	a = parser.parse_args()
+	
+	#ipdb.set_trace()
+	# parse the format file if that's what was passed
+	if not a.header and os.path.isfile('%s.fmt' % a.file):
+		a.header = [re.sub(r'^A\(|\)$', '', s) for s in open('%s.fmt' % a.file)]
+	elif len(a.header) == 1 and re.search(r'\.fmt$', a.header[0]):
+		a.header = [re.sub(r'^A\(|\)$', '', s) for s in open(a.header[0])]
+
+	return a
+
+if __name__ == '__main__':
+	args = parseargs()
+	df = pd.read_csv(args.file, header=None, names=args.header, delimiter=args.d) if args.header else pd.read_csv(args.file, delimiter=args.d)
+	rows = np.random.choice(df.index.values, args.sample)
+	sample = df.iloc[rows]
+	if args.tag:
+		tag = np.unique(sample.values[:,-1])
+		#cmap = plt.cm.gnuplot(np.linspace(0, 1, len(tag)))
+		cmap = [[0.0,1.0,0.0,1.0],[1.0,0.0,0.0,1.0]]
+		colors = [cmap[i] for i in sample.values[:,-1].astype(int)]
+		myplot = scatter_matrix(sample.ix[:,:-1], diagonal=args.plot, c=colors, marker=',', linewidths=0)
+	else:
+		myplot = scatter_matrix(sample, diagonal=args.plot)
+
+	#plt.tight_layout(pad=1.0, w_pad=0.5, h_pad=1.0)
+	plt.show()
+
+
+
+

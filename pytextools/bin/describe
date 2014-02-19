@@ -1,0 +1,167 @@
+#!/usr/bin/env python
+
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+import os
+import atexit
+user_term = os.environ['TERM'] 
+os.environ['TERM'] = 'linux'
+def resetPath():
+	os.environ['TERM'] = user_term
+atexit.register(resetPath)
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+
+import csv
+import sys
+import argparse
+import signal
+import itertools
+import numpy as np
+import math
+
+signal.signal( signal.SIGPIPE, signal.SIG_DFL )
+
+def parseArgs():
+	parser = argparse.ArgumentParser(description='Summary statistics on lists of integers', 
+		formatter_class=argparse.RawTextHelpFormatter)
+
+	fields = parser.add_argument_group('fields')
+	fields.add_argument('-t', '--field-delimiter', metavar='DELIMITER', dest='sep', action='store', default='|',
+				help='field delimiter (default = |)')
+
+	fields.add_argument('-m', '--in-memory', action='store_true', dest='in_memory',
+				help='The in memory version includes the median\n'
+					 'and percentiles, but must read the whole\n'
+					 'file into memory so it\'s slower and cannot\n'
+					 'handle massive files')
+
+	parser.add_argument('file', metavar='FILE', nargs='?', default='/dev/stdin',
+				help='the input file (default = STDIN)' )
+	a = parser.parse_args()
+
+	float2str = np.vectorize(lambda x: str(round(x, 2)))
+
+	if a.in_memory:
+		def calcStats():
+			fields = ['min','max','mean','median','mode','variance','stddev','1st_quartile','2nd_quartile','3rd_quartile']
+			data = np.genfromtxt(a.file, delimiter=a.sep)
+			data = np.nan_to_num(data)
+			stats = []
+			stats.append(np.min(data, axis=0))
+			stats.append(np.max(data, axis=0))
+			stats.append(np.mean(data, axis=0))
+			stats.append(np.median(data, axis=0))
+			stats.append(stats[1] - stats[0])	# mode
+			stats.append(np.var(data, axis=0))
+			stats.append(np.std(data, axis=0))	# stddev
+			stats.append(np.percentile(data, 25.0, axis=0))
+			stats.append(np.percentile(data, 50.0, axis=0))
+			stats.append(np.percentile(data, 75.0, axis=0))
+			return fields, np.round(np.array(stats), 2)
+
+		a.calcStats = calcStats
+	else:
+		def calcStats():
+			with open(a.file, 'rb') as f:
+				fields = ['min','max','mean','mode','variance','stddev']
+				reader = csv.reader(f, delimiter=a.sep)
+				first,reader = getFirstN(reader)
+				width = len(first[0])
+				iterator = line2fielditer(reader, width)
+				stats = fieldMap(iterator, online_stats, width)
+				stats = np.array([[round(x, 2) for x in stats[i]] for i in xrange(len(stats))]).T
+			return fields, stats
+
+		a.calcStats = calcStats
+
+	return a
+
+def printStats(stats):
+	widths = [len(str(x)) + 3 for x in np.max(np.abs(stats[1]), axis=0)]
+	for i,field in enumerate(stats[0]):
+		sys.stdout.write('%15s:' % field)
+		for stat,width in zip(stats[1][i],widths):
+			sys.stdout.write('%*.2f' % (width, stat))
+		sys.stdout.write('\n')
+
+
+def online_stats(data):
+	'''
+	An asynchronous version of the online stats function
+	that yields after each loop iteration.  This allows
+	each column of a list iterator to be processed
+	concurrently. 
+	Final yield returns: (min, max, mean, variance)
+	'''
+	n = 0
+	mean = 0
+	M2 = 0
+	Min = float('inf')
+	Max = float('-inf')
+
+	for x in data:
+		x = float(x)
+		if x < Min: Min = x
+		if x > Max: Max = x
+		n = n + 1
+		delta = x - mean
+		mean = mean + delta/n
+		M2 = M2 + delta*(x - mean)
+		yield
+
+	#variance = M2/(n - 1)
+	variance = M2/n
+	yield Min,Max,mean,Max-Min,variance,np.sqrt(variance)
+
+def getFirstN(iterator, N=1):
+	'''
+	Returns a tuple with a list of the first N records and 
+	the original iterator: (firstN, orgIt)
+	'''
+	firstN = [iterator.next() for _ in xrange(N)]
+	return firstN,itertools.chain(firstN,iterator)
+
+def line2fielditer(iterator, width):
+	'''
+	Converts an iterator that returns lists into an iterator
+	that returns each individual field.  It also checks that
+	each susbsequent record is equivalent to width.
+	'''
+	for rec in iterator:
+		if len(rec) != width:
+			raise Exception('Variable number of fields')
+		for field in rec:
+			yield float(field)
+
+def line2fielditerFast(iterator, width):
+	pass
+	
+
+def fieldMap(iterator, func, width):
+	'''
+	Maps a coroutine that yields after each consumed value
+	of an iterator to the "columns" of an iterator.
+	Returns the results of each coroutine in a list.
+	'''
+	iterCopies = [func(iterator) for _ in xrange(width)]
+	results = {i:0 for i in xrange(width)}
+	def run():
+		while True:
+			for i,it in enumerate(iterCopies):
+				try:
+					results[i] = it.next()
+				except StopIteration:
+					return results
+	return run()
+
+def widest(stats):
+	widest = [float('-inf') for _ in len(stats[0])]
+	for stat in stats:
+		for i in xrange(len(widest)):
+			widest[i] = stat[i] if stat[i] > widest[i] else widest[i]
+	return widest
+
+if __name__ == "__main__":
+	args = parseArgs()
+	stats = args.calcStats()
+	printStats(stats)
+

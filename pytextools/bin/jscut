@@ -1,0 +1,131 @@
+#!/usr/bin/env python
+
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+import os
+import atexit
+user_term = os.environ['TERM'] 
+os.environ['TERM'] = 'linux'
+def resetPath():
+	os.environ['TERM'] = user_term
+atexit.register(resetPath)
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+
+import re
+import json
+import signal
+import argparse
+
+signal.signal( signal.SIGPIPE, signal.SIG_DFL )
+
+def parseArgs():
+	parser = argparse.ArgumentParser(description='Cut data from a json file', 
+		formatter_class=argparse.RawTextHelpFormatter)
+
+	k_or_v = parser.add_mutually_exclusive_group()
+
+	k_or_v.add_argument('-k', '--keys', dest='keys', action='store_true',
+				help='print the keys of the dictionary')
+	k_or_v.add_argument('-v', '--values', dest='values', action='store_true',
+				 help='print the values of the dictionary')
+
+	parser.add_argument('-j', '--json', dest='json', action='store_true',
+				 help='print the original json separated by a tab')
+
+	parser.add_argument('pattern',
+				help='The pattern you wish to extract from each json record\n'
+					'with this format: [string][int][int:int][int:int:int]\n'
+					'example: cat some.json | jscut \'[tay][1:3][one]\'\n')
+	parser.add_argument('file', metavar='FILE', nargs='?', default='/dev/stdin',
+				help='The json input file (default = stdin)' )
+	a = parser.parse_args()
+
+	a.path = parsePattern(a.pattern)
+
+	kv = None
+	if a.keys:
+		kv = lambda x: x.keys()
+	elif a.values:
+		kv = lambda x: x.values()
+	else:
+		kv = lambda x: x
+
+	if a.json:
+		def jsprint(obj,line):
+			if isinstance(obj, dict):
+				print '%s\t%s' % (json.dumps(kv(obj)),line.strip()) 
+			elif isinstance(obj, list):
+				print '%s\t%s' % (json.dumps(obj),line.strip())
+			else:
+				print '%s\t%s' % (obj,line.strip())
+		a.jsprint = jsprint
+	else:
+		def jsprint(obj,line):
+			if isinstance(obj, dict):
+				print json.dumps(kv(obj))
+			elif isinstance(obj, list):
+				print json.dumps(obj)
+			else:
+				print obj
+		a.jsprint = jsprint
+	
+
+	return a
+
+def parsePattern(pattern):
+	'''
+	any concatenation of these possible patterns possible patterns
+	[string]
+	[int]
+	[int:int]
+	[int:int:int]
+	'''
+	def blocks(s):
+		ptr = 0 
+		while ptr < len(s):
+			m = re.match(r'^\[(\\\]|[^]])*\]', s[ptr:])
+			if m:
+				yield s[ptr:][slice(*m.span())][1:-1] 
+				ptr += m.end()
+			else:
+				raise Exception('Invalid pattern %s' % s[ptr:])
+
+	path = []
+	for match in blocks(pattern):
+		parts = []
+		for p in match.split(':'):
+			try:
+				if not p:
+					parts.append(None)
+				else:
+					x = int(p)
+					parts.append(x)
+			except:
+				parts = []
+				break
+
+		if len(parts) > 1:
+			parts = [None if not x else x for x in parts]
+			path.append(slice(*parts))
+		elif len(parts) == 1:
+			path.append(parts[0])
+		else:
+			path.append(match)
+
+	return path
+				
+
+
+if __name__ == '__main__':
+	args = parseArgs()
+
+	with open(args.file) as f:
+		for line in f:
+			rec = json.loads(line)
+			v = rec
+			try:
+				for p in args.path:
+					v = v[p]
+				args.jsprint(v,line)
+			except:
+				print
+

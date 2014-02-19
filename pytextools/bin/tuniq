@@ -1,0 +1,156 @@
+#!/usr/bin/env python
+
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+import os
+import atexit
+user_term = os.environ['TERM'] 
+os.environ['TERM'] = 'linux'
+def resetPath():
+	os.environ['TERM'] = user_term
+atexit.register(resetPath)
+# HACK TO PREVENT META TERM DATA FROM PRINTING TO STDOUT
+
+import string
+import argparse
+import sys
+import signal
+
+signal.signal( signal.SIGPIPE, signal.SIG_DFL )
+
+def intList(s):
+	try:
+		fields = map(lambda x: (int(x)-1), s.split(','))
+		return fields
+	except:
+		raise argparse.ArgumentTypeError("Must be a list of integers")
+
+def sublist( list, indices=[] ):
+	if len(indices):
+		sublist = []
+		for n in indices:
+			if n < len(list):
+				sublist.append( list[n] )
+		return sublist
+	else:
+		return list
+
+def printGroup( group, count, args ):
+	for line in group:
+		print '%s%s%s' % (args.count(count), args.count(args.sep), str.join(args.sep,sublist(line,args.printList)))
+
+def parseArgs():
+	parser = argparse.ArgumentParser(description='Expands upon the uniq utility, by allowing the test for uniqueness on a specific field or list of fields.  Of course those fields have to be sorted, and in the same order of the list of fields to test for uniqueness.')
+	parser.add_argument('-c', '--count', dest='count', action='store_const',
+				const=lambda i: str(i), default=lambda i: '',
+				help='prefix lines by the number of occurences')
+	parser.add_argument('-i', '--ignore-case', dest='case', action='store_const',
+				const=lambda s: s.lower(), default=lambda s: s,
+				help='ignore differences in case when comparing')
+
+
+	fields = parser.add_argument_group('fields')
+	fields.add_argument('-t', '--field-delimiter', metavar='DELIMITER', dest='sep', action='store', default='|',
+				help='field delimiter')
+	fields.add_argument('-f', '--match-fields', metavar='INDICES', dest='fields', action='store', type=intList,
+				default=[0], help='comma separated list of field indices to match upon')
+
+	fp = parser.add_argument_group('field printing')
+	group1 = fp.add_mutually_exclusive_group()
+	group1.add_argument('-a', '--print-all-fields', dest='only', action='store_const',default=False,const=False,
+				help='print all fields (this is the default)')
+	group1.add_argument('-o', '--print-match-fields', dest='only', action='store_const',const=True,
+				help='print the fields selected with the -f option')
+	group1.add_argument('-p', '--print-fields', metavar='INDICES', dest='printList', action='store', type=intList,
+				default=[], help='print the fields specified by a comma separated list')
+
+
+	filtering = parser.add_argument_group('lines',)
+	group2 = filtering.add_mutually_exclusive_group()
+	group2.add_argument('-n', '--number-matching', dest='n', action='store',
+				default=0, type=int,
+				help='select records with n matches')
+	group2.add_argument('-g', '--greater-than', metavar='N', dest='gt', action='store',
+				default=0, type=int,
+				help='select records with greater than n matches')
+	group2.add_argument('-l', '--less-than', metavar='N', dest='lt', action='store',
+				default=0, type=int,
+				help='select records with less than n matches')
+	group2.add_argument('-d', '--repeated', dest='gt', action='store_const',const=1, 
+				help='only select repeated records')
+	group2.add_argument('-u', '--unique', dest='n', action='store_const', const=1, 
+				help='only select unique records')
+
+	lines = parser.add_argument_group('line printing')
+	l = lines.add_mutually_exclusive_group()
+	l.add_argument('-F', '--print-first-match', dest='Print', action='store_const',
+				const=(lambda group,count,args: printGroup(group[:1],count,args)),
+				default=(lambda group,count,args: printGroup(group[:1],count,args)),
+				help='print the first matching line (this is the default)')
+	l.add_argument('-L', '--print-last-match', dest='Print', action='store_const',
+				const=(lambda group,count,args: printGroup(group[-1:],count,args)), 
+				help='print the last matching line')
+	l.add_argument('-A', '--print-all-matching', dest='Print', action='store_const',
+				const=(lambda group,count,args: printGroup(group,count,args)),
+				help='print all matching lines')
+
+
+	parser.add_argument('file', metavar='FILE', nargs='?', default='/dev/stdin',
+				help='the file to test for uniqueness' )
+	a = parser.parse_args()
+
+	if a.only:
+		a.printList = a.fields
+
+	return a
+
+def explode( string, delimiter ):
+	if (delimiter == '') or (delimiter == None):
+		return [string.strip()]
+	else:
+		return string.strip().split(delimiter)
+
+def match( r1, r2, args ):
+	match = True
+	if len(r1) and len(r2):
+		for n in args.fields:
+			if (n >= len(r1)) or (n >= len(r2)) or (args.case(r1[n]) != args.case(r2[n])):
+				match = False
+				break
+	else:
+		match = False
+	return match
+
+def readfileloop( file, args ):
+	lines = []
+	old, new = [], []
+	more = True
+	while more:
+		line = file.readline()
+		if line == '':
+			more = False
+		new = line.strip().split(args.sep)
+		if len(old):
+			lines.append(old)
+			if (not len(new)) or (not match( old, new, args )):
+				if args.n:
+					if len(lines) == args.n:
+						args.Print( lines, len(lines), args )	
+				elif args.gt:
+					if len(lines) > args.gt:
+						args.Print( lines, len(lines), args )	
+				elif args.lt:
+					if len(lines) < args.lt:
+						args.Print( lines, len(lines), args )	
+				else:
+					args.Print( lines, len(lines), args )	
+				lines[:] = []
+		old = new
+
+
+if __name__ == "__main__":
+	args = parseArgs()
+	f = open( args.file )
+	readfileloop( f, args )
+	f.close()
+
+
